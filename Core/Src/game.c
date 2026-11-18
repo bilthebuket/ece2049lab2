@@ -209,8 +209,18 @@ void game_init(void)
     score = 0;
     game_clock = 0;
     this_note_clock = 0;
+    song_index = 0;
 
     PARTITION = Display_width() / 4;
+
+    song = malloc(sizeof(Note) * 5);
+
+    for (int i = 0; i < 5; i++)
+    {
+        song[i].fb_index = i;
+        song[i].octave = 1;
+        song[i].length = 50;
+    }
 }
 
 void do_display(void)
