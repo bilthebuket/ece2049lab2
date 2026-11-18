@@ -28,7 +28,7 @@
 #include "Adafruit_TFTShield18_API.h"
 #include "Adafruit_ST7735_API.h"
 #include "stm32h5xx_hal.h"
-
+#include "game.h"
 #include "buzzer.h"
 #include "stopwatch.h"
 #include "stm32h5xx_hal_tim.h"
@@ -239,12 +239,12 @@ int main(void)
         displayTime(now);
         lastShown = now;
       }
+        */
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
 
-*/
   }
   /* USER CODE END 3 */
 }

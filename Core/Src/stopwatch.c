@@ -7,6 +7,7 @@
  *   update rate = 32 MHz / ((PSC + 1) * (ARR + 1))
  *               = 32 MHz / (32 * 10000) = 100 Hz  ->  one interrupt per 0.01 s
  */
+ /*
 #include <stdio.h>
 
 #include "stm32h5xx.h"
@@ -65,3 +66,4 @@ void displayTime(uint32_t t)
     Display_setCursor(20, 56);
     Display_print(str);
 }
+*/

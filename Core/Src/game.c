@@ -1,5 +1,7 @@
 #include <stdint.h>
 #include "stm32h5xx.h"
+#include "Adafruit_ST7735_API.h"
+#include "Adafruit_TFTShield18_API.h"
 #include "game.h"
 
 typedef struct
@@ -86,7 +88,7 @@ uint32_t song_size;
 uint32_t song_time; // how long the song is in ms
 uint32_t score;
 
-const uint32_t PARTITION = Display_width() / 4;
+uint32_t PARTITION = 0;
 
 void start_timer(void)
 {
@@ -207,6 +209,8 @@ void game_init(void)
     score = 0;
     game_clock = 0;
     this_note_clock = 0;
+
+    PARTITION = Display_width() / 4;
 }
 
 void do_display(void)
