@@ -205,7 +205,10 @@ int main(void)
 
 //  displayTime(0);
 
-  game_init();
+  if (!game_init(&hrng))
+  {
+    return 1;
+  }
 
   while (1)    // Forever loop of the stop watch
   {

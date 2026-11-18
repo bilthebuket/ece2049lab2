@@ -1,7 +1,12 @@
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include "Adafruit_ST7735_Macros.h"
 #include "stm32h5xx.h"
 #include "Adafruit_ST7735_API.h"
 #include "Adafruit_TFTShield18_API.h"
+#include "stm32h5xx_hal_rng.h"
 #include "game.h"
 
 typedef struct
@@ -79,6 +84,10 @@ typedef struct
 #define TIMER_PERIOD 1
 #define SHORTEST_NOTE 100
 
+#define MS_PER_PIXEL 25
+#define MS_PER_FRAME 10
+#define GRACE_PERIOD 500
+
 FreqBtn fb_pairs[NUM_FB_PAIRS];
 uint32_t game_clock;
 uint16_t this_note_clock;
@@ -88,7 +97,14 @@ uint32_t song_size;
 uint32_t song_time; // how long the song is in ms
 uint32_t score;
 
+#define SONG_NUM_NOTES 20
+#define NUM_PITCHES 4
+#define NOTE_MIN_LENGTH 100
+#define NOTE_MAX_LENGTH 1000
+
 uint32_t PARTITION = 0;
+
+bool done = false;
 
 void start_timer(void)
 {
@@ -110,6 +126,20 @@ void stop_timer(void)
     NVIC_DisableIRQ(TIM2_IRQn);
 }
 
+void display_score(void)
+{
+    Display_fillScreen(ST7735_BLACK);
+    Display_setCursor(0, 0);
+    double final_score = ((double) score / (double) song_time) * 100;
+    char str[5];
+    str[0] = '0' + (int) (final_score / 10) % 10;
+    str[1] = '0' + (int) final_score % 10;
+    str[2] = '.';
+    str[3] = '0' + (int) (final_score * 10) % 10;
+    str[4] = '\0';
+    Display_print(str);
+}
+
 uint8_t get_input(void)
 {
     uint8_t r = 0;
@@ -129,10 +159,12 @@ uint8_t get_input(void)
     {
         r |= YELLOW_FLAG;
     }
+    /*
     if (!(TFTShield18_readButtons() & TFTSHIELD_BUTTON_IN))
     {
         r |= SELECT_FLAG;
     }
+        */
     return r;
 }
 
@@ -168,9 +200,10 @@ uint8_t get_expected_input(int button)
 // The name must match the vector table in startup_stm32h533xx.s exactly.
 void TIM2_IRQHandler(void)
 {
-    TIM2->SR = ~TIM_SR_UIF;       // clear the update flag: write 0, don't modify
+    TIM2->SR &= ~TIM_SR_UIF;       // clear the update flag: write 0, don't modify
 
-    if (!(get_input() ^ get_expected_input(fb_pairs[song[song_index].fb_index].button)))
+    volatile int val = get_input() ^ get_expected_input(fb_pairs[song[song_index].fb_index].button);
+    if (!val)
     {
         score++;
     }
@@ -183,9 +216,14 @@ void TIM2_IRQHandler(void)
         this_note_clock = 0;
         song_index++;
     }
+    if (game_clock >= song_time || song_index >= song_size)
+    {
+        stop_timer();
+        done = true;
+    }
 }
 
-void game_init(void)
+bool game_init(RNG_HandleTypeDef* hrng)
 {
     for (int i = 0; i < NUM_FB_PAIRS; i++)
     {
@@ -213,20 +251,127 @@ void game_init(void)
 
     PARTITION = Display_width() / 4;
 
-    song = malloc(sizeof(Note) * 5);
+    song = malloc(sizeof(Note) * SONG_NUM_NOTES + 1);
+    song_size = SONG_NUM_NOTES + 1;
+    song_time = GRACE_PERIOD;
 
-    for (int i = 0; i < 5; i++)
+    song[0].fb_index = -1;
+    song[0].octave = 0;
+    song[0].length = GRACE_PERIOD;
+
+    for (int i = 1; i < SONG_NUM_NOTES + 1; i++)
     {
-        song[i].fb_index = i;
-        song[i].octave = 1;
-        song[i].length = 50;
+        uint32_t rand;
+
+        HAL_StatusTypeDef status = HAL_RNG_GenerateRandomNumber(hrng, &rand);
+        if (status != HAL_OK)
+        {
+            free(song);
+            return false;
+        }
+        song[i].fb_index = rand % NUM_FB_PAIRS;
+
+        status = HAL_RNG_GenerateRandomNumber(hrng, &rand);
+        if (status != HAL_OK)
+        {
+            free(song);
+            return false;
+        }
+        song[i].octave = rand % NUM_PITCHES + 1;
+
+        status = HAL_RNG_GenerateRandomNumber(hrng, &rand);
+        if (status != HAL_OK)
+        {
+            free(song);
+            return false;
+        }
+        song[i].length = rand % (NOTE_MAX_LENGTH - NOTE_MIN_LENGTH) + NOTE_MIN_LENGTH;
+        song_time += song[i].length;
+    }
+
+    start_timer();
+
+    return true;
+}
+
+void print_incoming_color(uint8_t color, uint32_t note_clock)
+{
+    int y = Display_height() - PARTITION;
+    int next_occurrence = song_index;
+    int time_until_occurrence = -1 * note_clock;
+    while (1)
+    {
+        for (; song[next_occurrence].fb_index < 0; next_occurrence++)
+        {
+            time_until_occurrence += song[next_occurrence].length;
+        }
+        for (; fb_pairs[song[next_occurrence].fb_index].button != color && next_occurrence < song_size; next_occurrence++)
+        {
+            time_until_occurrence += song[next_occurrence].length;
+        }
+
+        if (next_occurrence == song_size || time_until_occurrence / MS_PER_PIXEL >= y)
+        {
+            Display_fillRect(PARTITION * color, 0, PARTITION, y, ST7735_BLACK);
+            break;
+        }
+        else if (time_until_occurrence < 0)
+        {
+            int time_left = song[next_occurrence].length + time_until_occurrence;
+            int pixels = time_left / MS_PER_PIXEL;
+            if (pixels > y)
+            {
+                pixels = y;
+            }
+            Display_fillRect(PARTITION * color, y - pixels, PARTITION, pixels, ST7735_WHITE);
+            y -= pixels;
+            if (y <= 0)
+            {
+                break;
+            }
+            time_until_occurrence = time_left;
+            next_occurrence++;
+        }
+        else
+        {
+            int pixels = time_until_occurrence / MS_PER_PIXEL;
+            if (pixels > y)
+            {
+                pixels = y;
+            }
+            Display_fillRect(PARTITION * color, y - pixels, PARTITION, pixels, ST7735_BLACK);
+            y -= pixels;
+            if (y <= 0)
+            {
+                break;
+            }
+            pixels = song[next_occurrence].length / MS_PER_PIXEL;
+            if (pixels > y)
+            {
+                pixels = y;
+            }
+            Display_fillRect(PARTITION * color, y - pixels, PARTITION, pixels, ST7735_WHITE);
+            y -= pixels;
+            if (y <= 0)
+            {
+                break;
+            }
+            time_until_occurrence += song[next_occurrence].length;
+            next_occurrence++;
+        }
     }
 }
 
 void do_display(void)
 {
     static uint8_t last_input = 0xFF;
-    static uint8_t last_expected = 0xFF;
+    static uint32_t last_game_clock = 0;
+//    static uint8_t last_expected = 0xFF;
+    if (done)
+    {
+        display_score();
+        while (1) {}
+    }
     uint8_t input = get_input();
     if (input != last_input)
     {
@@ -267,43 +412,14 @@ void do_display(void)
         last_input = input;
     }
 
-    uint8_t expected = get_expected_input(fb_pairs[song[song_index].fb_index].button);
-    if (expected != last_expected)
+    if (game_clock / MS_PER_FRAME != last_game_clock / MS_PER_FRAME)
     {
-        if (expected & GREEN_FLAG)
+        for (int i = 0; i < NUM_BUTTONS; i++)
         {
-            Display_fillRect(PARTITION * GREEN, 0, PARTITION, Display_height() - PARTITION, ST7735_WHITE);
+            print_incoming_color(i, this_note_clock);
         }
-        else
-        {
-            Display_fillRect(PARTITION * GREEN, 0, PARTITION, Display_height() - PARTITION, ST7735_BLACK);
-        }
-        if (expected & BLUE_FLAG)
-        {
-            Display_fillRect(PARTITION * BLUE, 0, PARTITION, Display_height() - PARTITION, ST7735_WHITE);
-        }
-        else
-        {
-            Display_fillRect(PARTITION * BLUE, 0, PARTITION, Display_height() - PARTITION, ST7735_BLACK);
-        }
-        if (expected & RED_FLAG)
-        {
-            Display_fillRect(PARTITION * RED, 0, PARTITION, Display_height() - PARTITION, ST7735_WHITE);
-        }
-        else
-        {
-            Display_fillRect(PARTITION * RED, 0, PARTITION, Display_height() - PARTITION, ST7735_BLACK);
-        }
-        if (expected & YELLOW_FLAG)
-        {
-            Display_fillRect(PARTITION * YELLOW, 0, PARTITION, Display_height() - PARTITION, ST7735_WHITE);
-        }
-        else
-        {
-            Display_fillRect(PARTITION * YELLOW, 0, PARTITION, Display_height() - PARTITION, ST7735_BLACK);
-        }
-        last_expected = expected;
     }
+    last_game_clock = game_clock;
 }
 
 void do_buzzer(void)
