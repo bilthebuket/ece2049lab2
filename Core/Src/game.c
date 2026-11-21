@@ -39,7 +39,44 @@ typedef struct
 #define BLUE_FLAG (1 << 1)
 #define RED_FLAG (1 << 2)
 #define YELLOW_FLAG (1 << 3)
-#define SELECT_FLAG (1 << 4)
+#define JOYSTICK_FLAG (1 << 4)
+
+// leds are for testing
+#define BLUE_LED_PORT GPIOC
+#define BLUE_LED_MODE GPIO_MODER_MODE10
+#define BLUE_LED_PUPD GPIO_PUPDR_PUPD10
+#define BLUE_LED_MODE_0 GPIO_MODER_MODE10_0
+#define BLUE_LED_MODE_1 GPIO_MODER_MODE10_1
+#define BLUE_LED_PUPD_0 GPIO_PUPDR_PUPD10_0
+#define BLUE_LED_PUPD_1 GPIO_PUPDR_PUPD10_1
+#define BLUE_LED_OUTPUT GPIO_ODR_OD10
+
+#define GREEN_LED_PORT GPIOC
+#define GREEN_LED_MODE GPIO_MODER_MODE11
+#define GREEN_LED_PUPD GPIO_PUPDR_PUPD11
+#define GREEN_LED_MODE_0 GPIO_MODER_MODE11_0
+#define GREEN_LED_MODE_1 GPIO_MODER_MODE11_1
+#define GREEN_LED_PUPD_0 GPIO_PUPDR_PUPD11_0
+#define GREEN_LED_PUPD_1 GPIO_PUPDR_PUPD11_1
+#define GREEN_LED_OUTPUT GPIO_ODR_OD11
+
+#define RED_LED_PORT GPIOC
+#define RED_LED_MODE GPIO_MODER_MODE12
+#define RED_LED_PUPD GPIO_PUPDR_PUPD12
+#define RED_LED_MODE_0 GPIO_MODER_MODE12_0
+#define RED_LED_MODE_1 GPIO_MODER_MODE12_1
+#define RED_LED_PUPD_0 GPIO_PUPDR_PUPD12_0
+#define RED_LED_PUPD_1 GPIO_PUPDR_PUPD12_1
+#define RED_LED_OUTPUT GPIO_ODR_OD12
+
+#define YELLOW_LED_PORT GPIOD
+#define YELLOW_LED_MODE GPIO_MODER_MODE2
+#define YELLOW_LED_PUPD GPIO_PUPDR_PUPD2
+#define YELLOW_LED_MODE_0 GPIO_MODER_MODE2_0
+#define YELLOW_LED_MODE_1 GPIO_MODER_MODE2_1
+#define YELLOW_LED_PUPD_0 GPIO_PUPDR_PUPD2_0
+#define YELLOW_LED_PUPD_1 GPIO_PUPDR_PUPD2_1
+#define YELLOW_LED_OUTPUT GPIO_ODR_OD2
 
 #define GREEN_BUTTON_PORT GPIOA
 #define GREEN_BUTTON_MODE GPIO_MODER_MODE6
@@ -89,13 +126,13 @@ typedef struct
 #define GRACE_PERIOD 500
 
 FreqBtn fb_pairs[NUM_FB_PAIRS];
-uint32_t game_clock;
-uint16_t this_note_clock;
+volatile uint32_t game_clock;
+volatile uint16_t this_note_clock;
 Note* song;
-uint32_t song_index;
+volatile uint32_t song_index;
 uint32_t song_size;
 uint32_t song_time; // how long the song is in ms
-uint32_t score;
+volatile uint32_t score;
 
 #define SONG_NUM_NOTES 20
 #define NUM_PITCHES 4
@@ -105,6 +142,61 @@ uint32_t score;
 uint32_t PARTITION = 0;
 
 bool done = false;
+
+void set_led(int led, bool on)
+{
+    switch (led)
+    {
+        case GREEN:
+        {
+            if (on)
+            {
+                GREEN_LED_PORT->ODR |= GREEN_LED_OUTPUT;
+            }
+            else
+            {
+                GREEN_LED_PORT->ODR &= ~GREEN_LED_OUTPUT;
+            }
+            break;
+        }
+        case BLUE:
+        {
+            if (on)
+            {
+                BLUE_LED_PORT->ODR |= BLUE_LED_OUTPUT;
+            }
+            else
+            {
+                BLUE_LED_PORT->ODR &= ~BLUE_LED_OUTPUT;
+            }
+            break;
+        }
+        case RED:
+        {
+            if (on)
+            {
+                RED_LED_PORT->ODR |= RED_LED_OUTPUT;
+            }
+            else
+            {
+                RED_LED_PORT->ODR &= ~RED_LED_OUTPUT;
+            }
+            break;
+        }
+        case YELLOW:
+        {
+            if (on)
+            {
+                YELLOW_LED_PORT->ODR |= YELLOW_LED_OUTPUT;
+            }
+            else
+            {
+                YELLOW_LED_PORT->ODR &= ~YELLOW_LED_OUTPUT;
+            }
+            break;
+        }
+    }
+}
 
 void start_timer(void)
 {
@@ -140,7 +232,7 @@ void display_score(void)
     Display_print(str);
 }
 
-uint8_t get_input(void)
+uint8_t get_input(bool check_for_joystick)
 {
     uint8_t r = 0;
     if (GREEN_BUTTON_PORT->IDR & GREEN_BUTTON_INPUT)
@@ -159,12 +251,10 @@ uint8_t get_input(void)
     {
         r |= YELLOW_FLAG;
     }
-    /*
-    if (!(TFTShield18_readButtons() & TFTSHIELD_BUTTON_IN))
+    if (check_for_joystick && !(TFTShield18_readButtons() & TFTSHIELD_BUTTON_IN))
     {
-        r |= SELECT_FLAG;
+        r |= JOYSTICK_FLAG;
     }
-        */
     return r;
 }
 
@@ -200,12 +290,15 @@ uint8_t get_expected_input(int button)
 // The name must match the vector table in startup_stm32h533xx.s exactly.
 void TIM2_IRQHandler(void)
 {
-    TIM2->SR &= ~TIM_SR_UIF;       // clear the update flag: write 0, don't modify
-
-    volatile int val = get_input() ^ get_expected_input(fb_pairs[song[song_index].fb_index].button);
-    if (!val)
+    int fb_index = song[song_index].fb_index;
+    if (fb_index >= 0)
     {
-        score++;
+        int val = get_input(false);
+        val ^= get_expected_input(fb_pairs[fb_index].button);
+        if (!val)
+        {
+            score++;
+        }
     }
 
     game_clock++;
@@ -221,6 +314,8 @@ void TIM2_IRQHandler(void)
         stop_timer();
         done = true;
     }
+
+    TIM2->SR &= ~TIM_SR_UIF;       // clear the update flag: write 0, don't modify
 }
 
 bool game_init(RNG_HandleTypeDef* hrng)
@@ -230,6 +325,15 @@ bool game_init(RNG_HandleTypeDef* hrng)
         fb_pairs[i].freq = LOWEST_FREQ + i * FREQ_INCREMENT;
         fb_pairs[i].button = i % NUM_BUTTONS;
     }
+
+    BLUE_LED_PORT->MODER &= ~BLUE_LED_MODE;
+    BLUE_LED_PORT->MODER |= BLUE_LED_MODE_0;
+    GREEN_LED_PORT->MODER &= ~GREEN_LED_MODE;
+    GREEN_LED_PORT->MODER |= GREEN_LED_MODE_0;
+    RED_LED_PORT->MODER &= ~RED_LED_MODE;
+    RED_LED_PORT->MODER |= RED_LED_MODE_0;
+    YELLOW_LED_PORT->MODER &= ~YELLOW_LED_MODE;
+    YELLOW_LED_PORT->MODER |= YELLOW_LED_MODE_0;
 
     BLUE_BUTTON_PORT->MODER &= ~BLUE_BUTTON_MODE;
     BLUE_BUTTON_PORT->PUPDR &= ~BLUE_BUTTON_PUPD;
@@ -301,7 +405,7 @@ void print_incoming_color(uint8_t color, uint32_t note_clock)
     int time_until_occurrence = -1 * note_clock;
     while (1)
     {
-        for (; song[next_occurrence].fb_index < 0; next_occurrence++)
+        for (; song[next_occurrence].fb_index < 0 && next_occurrence < song_size; next_occurrence++)
         {
             time_until_occurrence += song[next_occurrence].length;
         }
@@ -329,7 +433,7 @@ void print_incoming_color(uint8_t color, uint32_t note_clock)
             {
                 break;
             }
-            time_until_occurrence = time_left;
+            time_until_occurrence = 0;
             next_occurrence++;
         }
         else
@@ -356,7 +460,7 @@ void print_incoming_color(uint8_t color, uint32_t note_clock)
             {
                 break;
             }
-            time_until_occurrence += song[next_occurrence].length;
+            time_until_occurrence = 0;
             next_occurrence++;
         }
     }
@@ -372,7 +476,13 @@ void do_display(void)
         display_score();
         while (1) {}
     }
-    uint8_t input = get_input();
+    set_led(BLUE, true);
+    uint8_t input = get_input(true);
+    if (input & JOYSTICK_FLAG)
+    {
+
+    }
+    set_led(BLUE, false);
     if (input != last_input)
     {
         if (input & GREEN_FLAG)
